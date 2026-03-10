@@ -22,7 +22,7 @@ jobs:
       - name: Run Audit Script
         run: node audit.js
         env:
-          SITE_URL: https://mytimesheet.in
+          SITE_URL: https://www.amazon.in/
 
       - name: Upload Report
         uses: actions/upload-artifact@v4
