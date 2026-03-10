@@ -1,0 +1,28 @@
+name: Website Audit
+
+on:
+  workflow_dispatch:
+
+jobs:
+  audit:
+
+    runs-on: ubuntu-latest
+
+    steps:
+
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 18
+
+      - run: npm install
+
+      - run: node audit.js
+        env:
+          SITE_URL: https://example.com
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: website-audit-report
+          path: report.html
