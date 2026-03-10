@@ -1,123 +1,107 @@
 const fetch = require("node-fetch");
 const puppeteer = require("puppeteer");
-const lighthouse = require("lighthouse");
 const fs = require("fs");
 
 const site = process.env.SITE_URL || "https://example.com";
 
-async function validateHTML(){
-const res = await fetch(`https://validator.w3.org/nu/?doc=${site}&out=json`);
-const data = await res.json();
-return data.messages;
+async function validateHTML() {
+  const res = await fetch(`https://validator.w3.org/nu/?doc=${site}&out=json`);
+  const data = await res.json();
+  return data.messages;
 }
 
-async function validateCSS(){
-const res = await fetch(`https://jigsaw.w3.org/css-validator/validator?uri=${site}&output=json`);
-const data = await res.json();
-return data.cssvalidation.errors;
+async function validateCSS() {
+  const res = await fetch(`https://jigsaw.w3.org/css-validator/validator?uri=${site}&output=json`);
+  const data = await res.json();
+  return data.cssvalidation.errors;
 }
 
-async function scanSite(){
+async function scanSite() {
 
-const browser = await puppeteer.launch();
-const page = await browser.newPage();
+  const browser = await puppeteer.launch({
+    args: ["--no-sandbox", "--disable-setuid-sandbox"]
+  });
 
-let jsErrors=[];
+  const page = await browser.newPage();
 
-page.on("pageerror",err=>{
-jsErrors.push(err.message)
-});
+  let jsErrors = [];
 
-await page.goto(site,{waitUntil:"networkidle2"});
+  page.on("pageerror", err => {
+    jsErrors.push(err.message);
+  });
 
-const results = await page.evaluate(()=>{
+  await page.goto(site, { waitUntil: "networkidle2" });
 
-const links=[...document.links].map(l=>l.href)
+  const results = await page.evaluate(() => {
 
-const css=[...document.styleSheets].map(s=>s.href).filter(Boolean)
+    const links = [...document.links].map(l => l.href);
 
-const elements=[...document.querySelectorAll("*")].length
+    const css = [...document.styleSheets]
+      .map(s => s.href)
+      .filter(Boolean);
 
-const inlineStyles=[...document.querySelectorAll("[style]")].length
+    const elements = [...document.querySelectorAll("*")].length;
 
-return{
-links,
-css,
-elements,
-inlineStyles
+    const inlineStyles = [...document.querySelectorAll("[style]")].length;
+
+    return {
+      links,
+      css,
+      elements,
+      inlineStyles
+    };
+
+  });
+
+  await browser.close();
+
+  results.jsErrors = jsErrors;
+
+  return results;
 }
 
-});
+async function checkBrokenLinks(links) {
 
-await browser.close()
+  let broken = [];
 
-results.jsErrors=jsErrors
+  for (let url of links) {
+    try {
+      const res = await fetch(url, { method: "HEAD" });
+      if (res.status >= 400) broken.push(url);
+    } catch (e) {
+      broken.push(url);
+    }
+  }
 
-return results
+  return broken;
 }
 
-async function checkBrokenLinks(links){
+async function getSecurityHeaders() {
 
-let broken=[]
+  const res = await fetch(site);
 
-for(let url of links){
+  const headers = [
+    "content-security-policy",
+    "x-frame-options",
+    "x-content-type-options",
+    "strict-transport-security"
+  ];
 
-try{
-const res=await fetch(url,{method:"HEAD",timeout:5000})
-if(res.status>=400) broken.push(url)
-}catch(e){
-broken.push(url)
+  let result = {};
+
+  headers.forEach(h => {
+    result[h] = res.headers.get(h) || "missing";
+  });
+
+  return result;
 }
 
-}
+function generateReport(data) {
 
-return broken
-}
-
-async function getSecurityHeaders(){
-
-const res=await fetch(site)
-
-const headers=[
-"content-security-policy",
-"x-frame-options",
-"x-content-type-options",
-"strict-transport-security"
-]
-
-let result={}
-
-headers.forEach(h=>{
-result[h]=res.headers.get(h)||"missing"
-})
-
-return result
-}
-
-async function runLighthouse(){
-
-const browser=await puppeteer.launch({headless:true})
-
-const result=await lighthouse(site,{
-port:(new URL(browser.wsEndpoint())).port
-})
-
-await browser.close()
-
-return{
-performance:result.lhr.categories.performance.score*100,
-seo:result.lhr.categories.seo.score*100,
-accessibility:result.lhr.categories.accessibility.score*100
-}
-
-}
-
-function generateReport(data){
-
-const html=`
+  const html = `
 <html>
 <head>
-<title>Website Audit</title>
+<title>Website Audit Report</title>
 
 <style>
 body{font-family:Arial;padding:40px;background:#fafafa}
@@ -137,13 +121,6 @@ pre{background:#fff;padding:10px;border:1px solid #ddd}
 <div class="section">
 <h2>Site</h2>
 ${site}
-</div>
-
-<div class="section">
-<h2>Lighthouse Scores</h2>
-Performance: ${data.lighthouse.performance}<br>
-SEO: ${data.lighthouse.seo}<br>
-Accessibility: ${data.lighthouse.accessibility}
 </div>
 
 <div class="section">
@@ -178,37 +155,34 @@ Accessibility: ${data.lighthouse.accessibility}
 
 </body>
 </html>
-`
+`;
 
-fs.writeFileSync("report.html",html)
+  fs.writeFileSync("report.html", html);
 
 }
 
-(async()=>{
+(async () => {
 
-console.log("Starting Audit:",site)
+  console.log("Starting Audit:", site);
 
-const html=await validateHTML()
+  const html = await validateHTML();
 
-const css=await validateCSS()
+  const css = await validateCSS();
 
-const scan=await scanSite()
+  const scan = await scanSite();
 
-const broken=await checkBrokenLinks(scan.links)
+  const broken = await checkBrokenLinks(scan.links);
 
-const security=await getSecurityHeaders()
+  const security = await getSecurityHeaders();
 
-const lighthouseResults=await runLighthouse()
+  generateReport({
+    html,
+    css,
+    scan,
+    broken,
+    security
+  });
 
-generateReport({
-html,
-css,
-scan,
-broken,
-security,
-lighthouse:lighthouseResults
-})
+  console.log("Audit finished → report.html generated");
 
-console.log("Audit finished → report.html generated")
-
-})()
+})();
